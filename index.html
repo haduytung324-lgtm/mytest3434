@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Chụp Ảnh + Ghi Chú + Vị Trí + QR</title>
+<meta name="theme-color" content="#007aff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<script src="https://cdn.jsdelivr.net/npm/piexifjs@1.0.6/piexif.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<style>
+* { box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f2f2f7;
+    margin: 0;
+    padding: 12px;
+    color: #1c1c1e;
+    min-height: 100vh;
+}
+h1 { font-size: 20px; margin: 0 0 12px; font-weight: 700; text-align: center; }
+.card {
+    background: #fff;
+    padding: 14px;
+    border-radius: 16px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+}
+button, .btn {
+    border: none;
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 8px;
+}
+.primary { background: #007aff; color: #fff; }
+.success { background: #34c759; color: #fff; }
+.ghost { background: #eee; color: #333; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.row button { flex: 1; margin-top: 0; }
+#canvasWrap {
+    position: relative;
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+    margin: 8px 0;
+    max-height: 70vh;
+    display: flex;
+    justify-content: center;
+}
+#photoCanvas {
+    max-width: 100%;
+    max-height: 70vh;
+    touch-action: none;
+    cursor: crosshair;
+}
+.controls { margin-top: 10px; }
+label { font-size: 13px; color: #555; display: block; margin-top: 10px; margin-bottom: 4px; }
+input[type="text"], input[type="range"], input[type="color"] {
+    width: 100%;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid #ddd;
+    font-size: 15px;
+}
+.color-row { display: flex; gap: 8px; align-items: center; }
+.color-row input[type="color"] { width: 50px; height: 40px; padding: 2px; flex-shrink: 0; }
+.info-box {
+    background: #fafafa;
+    border: 1px solid #eee;
+    padding: 10px;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.4;
+    margin-top: 8px;
+}
+.stamp-preview {
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    margin-top: 8px;
+    white-space: pre-wrap;
+}
+#toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    background: #333;
+    color: #fff;
+    padding: 12px 18px;
+    border-radius: 12px;
+    font-size: 14px;
+    z-index: 1000;
+    opacity: 0;
+    transition: .25s;
+}
+#toast.show { opacity: 1; }
+.hidden { display: none !important; }
+#qrHidden { position: absolute; left: -9999px; }
+</style>
+</head>
+<body>
+
+<h1>📸 Chụp Ảnh + QR Chỉ Đường</h1>
+
+<div class="card" id="startCard">
+    <button class="primary" id="btnCamera">📷 Chụp ảnh / Chọn ảnh</button>
+    <input type="file" id="fileInput" accept="image/*" capture="environment" style="display:none">
+    <p style="font-size:13px;color:#777;text-align:center;margin:10px 0 0">Ảnh sẽ có ngày giờ tiếng Việt + tọa độ + mã QR chỉ đường</p>
+</div>
+
+<div id="editor" class="hidden">
+    <div class="card">
+        <div id="canvasWrap">
+            <canvas id="photoCanvas"></canvas>
+        </div>
+
+        <div class="info-box" id="locationInfo">Đang lấy vị trí...</div>
+
+        <label>Ghi chú (hiện ở phần trên ảnh)</label>
+        <input type="text" id="noteInput" placeholder="VD: Công tơ số 123456 - Đã kiểm tra">
+
+        <div class="controls">
+            <label>Màu bút</label>
+            <div class="color-row">
+                <input type="color" id="penColor" value="#ff0000">
+                <input type="range" id="penSize" min="2" max="20" value="5">
+                <span id="sizeLabel">5px</span>
+            </div>
+
+            <div class="row" style="margin-top:10px">
+                <button class="ghost" id="btnDrawMode">✏️ Chế độ vẽ</button>
+                <button class="ghost" id="btnClearDraw">🗑 Xóa nét vẽ</button>
+            </div>
+
+            <button class="success" id="btnSave">💾 Lưu ảnh (có QR)</button>
+            <button class="primary" id="btnCopyLink">📋 Sao chép link chỉ đường</button>
+            <button class="ghost" id="btnNew">🔄 Chụp ảnh mới</button>
+        </div>
+
+        <div class="stamp-preview" id="stampPreview"></div>
+        <p style="font-size:12px;color:#666;margin-top:8px">💡 <b>Cách nhanh nhất trên Zalo:</b><br>
+        1. Bấm <b>Sao chép link chỉ đường</b><br>
+        2. Gửi ảnh + dán link vào tin nhắn<br>
+        Bạn bè chỉ cần ấn vào link là mở bản đồ ngay.</p>
+    </div>
+</div>
+
+<div id="qrHidden"></div>
+<div id="toast"></div>
+
+<script>
+const canvas = document.getElementById('photoCanvas');
+const ctx = canvas.getContext('2d');
+const fileInput = document.getElementById('fileInput');
+const noteInput = document.getElementById('noteInput');
+const penColor = document.getElementById('penColor');
+const penSize = document.getElementById('penSize');
+const sizeLabel = document.getElementById('sizeLabel');
+const stampPreview = document.getElementById('stampPreview');
+const locationInfo = document.getElementById('locationInfo');
+
+let originalImage = null;
+let isDrawing = false;
+let drawMode = true;
+let lastX = 0, lastY = 0;
+let drawings = [];
+let currentStroke = null;
+let gps = { lat: null, lng: null, acc: null };
+
+function toast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function getVietnameseDateTime() {
+    const now = new Date();
+    return now.toLocaleString('vi-VN', {
+        weekday: 'long',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZone: 'Asia/Ho_Chi_Minh',
+        hour12: false
+    });
+}
+
+function updateStampPreview() {
+    const note = noteInput.value.trim();
+    const dt = getVietnameseDateTime();
+    let loc = 'Đang lấy vị trí...';
+    if (gps.lat !== null) {
+        loc = `📍 ${gps.lat.toFixed(6)}, ${gps.lng.toFixed(6)} (±${Math.round(gps.acc||0)}m)`;
+    }
+    let text = `${dt}\n${loc}`;
+    if (note) text += `\n📝 ${note}`;
+    text += `\n🔍 Quét QR để chỉ đường`;
+    stampPreview.textContent = text;
+}
+
+function getLocation() {
+    if (!navigator.geolocation) {
+        locationInfo.textContent = 'Trình duyệt không hỗ trợ GPS';
+        updateStampPreview();
+        return;
+    }
+    locationInfo.textContent = 'Đang lấy vị trí GPS...';
+    navigator.geolocation.getCurrentPosition(
+        pos => {
+            gps.lat = pos.coords.latitude;
+            gps.lng = pos.coords.longitude;
+            gps.acc = pos.coords.accuracy;
+            locationInfo.innerHTML = `
+                <b>Tọa độ:</b> ${gps.lat.toFixed(6)}, ${gps.lng.toFixed(6)}<br>
+                <b>Độ chính xác:</b> ±${Math.round(gps.acc)} mét<br>
+                <a href="https://www.google.com/maps/dir/?api=1&destination=${gps.lat},${gps.lng}" target="_blank" style="color:#007aff">🗺️ Mở chỉ đường</a>
+            `;
+            updateStampPreview();
+        },
+        err => {
+            locationInfo.textContent = 'Không lấy được vị trí: ' + err.message;
+            updateStampPreview();
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+}
+
+function loadImage(file) {
+    const reader = new FileReader();
+    reader.onload = e => {
+        const img = new Image();
+        img.onload = () => {
+            originalImage = img;
+            drawings = [];
+            setupCanvas();
+            document.getElementById('startCard').classList.add('hidden');
+            document.getElementById('editor').classList.remove('hidden');
+            getLocation();
+            updateStampPreview();
+            toast('Đã tải ảnh');
+        };
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+function setupCanvas() {
+    if (!originalImage) return;
+    const maxW = window.innerWidth - 40;
+    const maxH = window.innerHeight * 0.55;
+    let w = originalImage.width;
+    let h = originalImage.height;
+    const ratio = Math.min(maxW / w, maxH / h, 1);
+    canvas.width = Math.round(w * ratio);
+    canvas.height = Math.round(h * ratio);
+    redraw();
+}
+
+function redraw() {
+    if (!originalImage) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(originalImage, 0, 0, canvas.width, canvas.height);
+
+    drawings.forEach(stroke => {
+        ctx.strokeStyle = stroke.color;
+        ctx.lineWidth = stroke.size;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        stroke.points.forEach((p, i) => {
+            if (i === 0) ctx.moveTo(p.x, p.y);
+            else ctx.lineTo(p.x, p.y);
+        });
+        ctx.stroke();
+    });
+}
+
+function getCanvasPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+        x: (clientX - rect.left) * scaleX,
+        y: (clientY - rect.top) * scaleY
+    };
+}
+
+function startDraw(e) {
+    if (!drawMode) return;
+    e.preventDefault();
+    isDrawing = true;
+    const pos = getCanvasPos(e);
+    lastX = pos.x;
+    lastY = pos.y;
+    currentStroke = {
+        color: penColor.value,
+        size: parseInt(penSize.value),
+        points: [{ x: lastX, y: lastY }]
+    };
+}
+
+function draw(e) {
+    if (!isDrawing || !drawMode) return;
+    e.preventDefault();
+    const pos = getCanvasPos(e);
+    currentStroke.points.push(pos);
+    ctx.strokeStyle = currentStroke.color;
+    ctx.lineWidth = currentStroke.size;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(lastX, lastY);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+    lastX = pos.x;
+    lastY = pos.y;
+}
+
+function endDraw(e) {
+    if (!isDrawing) return;
+    isDrawing = false;
+    if (currentStroke && currentStroke.points.length > 1) {
+        drawings.push(currentStroke);
+    }
+    currentStroke = null;
+}
+
+function generateQRDataURL(text, size = 200) {
+    return new Promise(resolve => {
+        const div = document.getElementById('qrHidden');
+        div.innerHTML = '';
+        new QRCode(div, {
+            text: text,
+            width: size,
+            height: size,
+            colorDark: "#000000",
+            colorLight: "#ffffff",
+            correctLevel: QRCode.CorrectLevel.M
+        });
+        setTimeout(() => {
+            const canvasQR = div.querySelector('canvas');
+            if (canvasQR) resolve(canvasQR.toDataURL());
+            else resolve(null);
+        }, 100);
+    });
+}
+
+async function applyStampAndQR(exportCanvas) {
+    const ectx = exportCanvas.getContext('2d');
+    const note = noteInput.value.trim();
+    const dt = getVietnameseDateTime();
+    let locText = gps.lat !== null
+        ? `${gps.lat.toFixed(6)}, ${gps.lng.toFixed(6)}`
+        : 'Không có vị trí';
+
+    const lines = [
+        dt,
+        `📍 ${locText}`,
+        '🔍 Quét QR để chỉ đường'
+    ];
+    if (note) lines.splice(2, 0, `📝 ${note}`);
+
+    const padding = 24;
+    const lineHeight = 40;
+    const fontSize = Math.max(32, exportCanvas.width / 35);
+    ectx.font = `bold ${fontSize}px -apple-system, sans-serif`;
+    ectx.textBaseline = 'top';
+
+    let maxWidth = 0;
+    lines.forEach(line => {
+        const w = ectx.measureText(line).width;
+        if (w > maxWidth) maxWidth = w;
+    });
+
+    const boxW = maxWidth + padding * 2;
+    const boxH = lines.length * lineHeight + padding * 1.5;
+    const boxX = 30;
+    const boxY = 30;
+
+    ectx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ectx.beginPath();
+    ectx.roundRect(boxX, boxY, boxW, boxH, 18);
+    ectx.fill();
+
+    ectx.fillStyle = '#ffffff';
+    lines.forEach((line, i) => {
+        ectx.fillText(line, boxX + padding, boxY + padding / 2 + i * lineHeight);
+    });
+
+    // QR code bottom-right
+    if (gps.lat !== null) {
+        const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${gps.lat},${gps.lng}`;
+        const qrDataUrl = await generateQRDataURL(mapsUrl, 280);
+        if (qrDataUrl) {
+            const qrImg = new Image();
+            await new Promise(r => { qrImg.onload = r; qrImg.src = qrDataUrl; });
+            const qrSize = Math.min(exportCanvas.width * 0.22, 280);
+            const qrX = exportCanvas.width - qrSize - 30;
+            const qrY = exportCanvas.height - qrSize - 30;
+            // white background for QR
+            ectx.fillStyle = '#ffffff';
+            ectx.fillRect(qrX - 8, qrY - 8, qrSize + 16, qrSize + 16);
+            ectx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+            // label under QR
+            ectx.fillStyle = 'rgba(0,0,0,0.8)';
+            ectx.font = `bold ${Math.round(qrSize * 0.12)}px sans-serif`;
+            ectx.textAlign = 'center';
+            ectx.fillText('QUÉT CHỈ ĐƯỜNG', qrX + qrSize / 2, qrY + qrSize + 12);
+            ectx.textAlign = 'left';
+        }
+    }
+}
+
+function buildExif(jpegDataUrl) {
+    if (gps.lat === null || typeof piexif === 'undefined') return jpegDataUrl;
+    try {
+        const zeroth = {};
+        const exif = {};
+        const gpsIfd = {};
+
+        const now = new Date();
+        const dt = now.toISOString().replace(/[-:T]/g, '').slice(0, 14).replace(/(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/, '$1:$2:$3 $4:$5:$6');
+
+        zeroth[piexif.ImageIFD.Software] = "ChupAnhGhiChu";
+        exif[piexif.ExifIFD.DateTimeOriginal] = dt;
+        exif[piexif.ExifIFD.DateTimeDigitized] = dt;
+
+        gpsIfd[piexif.GPSIFD.GPSVersionID] = [2, 2, 0, 0];
+        gpsIfd[piexif.GPSIFD.GPSLatitudeRef] = gps.lat >= 0 ? "N" : "S";
+        gpsIfd[piexif.GPSIFD.GPSLatitude] = piexif.GPSHelper.degToDmsRational(Math.abs(gps.lat));
+        gpsIfd[piexif.GPSIFD.GPSLongitudeRef] = gps.lng >= 0 ? "E" : "W";
+        gpsIfd[piexif.GPSIFD.GPSLongitude] = piexif.GPSHelper.degToDmsRational(Math.abs(gps.lng));
+
+        const exifObj = { "0th": zeroth, "Exif": exif, "GPS": gpsIfd };
+        const exifBytes = piexif.dump(exifObj);
+        return piexif.insert(exifBytes, jpegDataUrl);
+    } catch (e) {
+        console.warn(e);
+        return jpegDataUrl;
+    }
+}
+
+async function saveImage() {
+    if (!originalImage) return;
+    toast('Đang tạo ảnh...');
+
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = originalImage.width;
+    exportCanvas.height = originalImage.height;
+    const ectx = exportCanvas.getContext('2d');
+
+    ectx.drawImage(originalImage, 0, 0);
+
+    // Scale drawings
+    const scaleX = originalImage.width / canvas.width;
+    const scaleY = originalImage.height / canvas.height;
+    drawings.forEach(stroke => {
+        ectx.strokeStyle = stroke.color;
+        ectx.lineWidth = stroke.size * Math.max(scaleX, scaleY);
+        ectx.lineCap = 'round';
+        ectx.lineJoin = 'round';
+        ectx.beginPath();
+        stroke.points.forEach((p, i) => {
+            const x = p.x * scaleX;
+            const y = p.y * scaleY;
+            if (i === 0) ectx.moveTo(x, y);
+            else ectx.lineTo(x, y);
+        });
+        ectx.stroke();
+    });
+
+    await applyStampAndQR(exportCanvas);
+
+    let dataUrl = exportCanvas.toDataURL('image/jpeg', 0.92);
+    dataUrl = buildExif(dataUrl);
+
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = `anh-chi-duong-${Date.now()}.jpg`;
+    a.click();
+    toast('Đã lưu ảnh có QR chỉ đường');
+}
+
+// Events
+document.getElementById('btnCamera').onclick = () => fileInput.click();
+fileInput.onchange = e => {
+    if (e.target.files[0]) loadImage(e.target.files[0]);
+};
+
+canvas.addEventListener('pointerdown', startDraw);
+canvas.addEventListener('pointermove', draw);
+canvas.addEventListener('pointerup', endDraw);
+canvas.addEventListener('pointerleave', endDraw);
+canvas.addEventListener('touchstart', startDraw, { passive: false });
+canvas.addEventListener('touchmove', draw, { passive: false });
+canvas.addEventListener('touchend', endDraw);
+
+document.getElementById('btnDrawMode').onclick = () => {
+    drawMode = !drawMode;
+    document.getElementById('btnDrawMode').textContent = drawMode ? '✏️ Đang vẽ' : '✏️ Chế độ vẽ';
+    canvas.style.cursor = drawMode ? 'crosshair' : 'default';
+    toast(drawMode ? 'Bật chế độ vẽ' : 'Tắt chế độ vẽ');
+};
+
+document.getElementById('btnClearDraw').onclick = () => {
+    drawings = [];
+    redraw();
+    toast('Đã xóa nét vẽ');
+};
+
+document.getElementById('btnSave').onclick = saveImage;
+document.getElementById('btnCopyLink').onclick = () => {
+    if (gps.lat === null) { toast('Chưa có vị trí GPS'); return; }
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${gps.lat},${gps.lng}`;
+    navigator.clipboard.writeText(url).then(() => {
+        toast('Đã sao chép link chỉ đường');
+    }).catch(() => {
+        // fallback
+        prompt('Sao chép link này:', url);
+    });
+};
+document.getElementById('btnNew').onclick = () => {
+    document.getElementById('editor').classList.add('hidden');
+    document.getElementById('startCard').classList.remove('hidden');
+    originalImage = null;
+    drawings = [];
+    fileInput.value = '';
+};
+
+penSize.oninput = () => { sizeLabel.textContent = penSize.value + 'px'; };
+noteInput.oninput = updateStampPreview;
+
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+        this.beginPath();
+        this.moveTo(x + r, y);
+        this.arcTo(x + w, y, x + w, y + h, r);
+        this.arcTo(x + w, y + h, x, y + h, r);
+        this.arcTo(x, y + h, x, y, r);
+        this.arcTo(x, y, x + w, y, r);
+        this.closePath();
+    };
+}
+
+window.addEventListener('resize', () => {
+    if (originalImage) setupCanvas();
+});
+</script>
+</body>
+</html>
